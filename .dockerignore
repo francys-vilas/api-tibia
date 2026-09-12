@@ -1,0 +1,13 @@
+# O build da API usa a RAIZ do repo como contexto (precisa do scraper), entao
+# este arquivo tem que ficar aqui, e nao dentro de api/.
+#
+# Os padroes do .dockerignore sao casados contra o caminho inteiro, entao
+# "__pycache__/" sozinho pegaria so o da raiz - dai o "**/".
+.git/
+.venv/
+**/__pycache__/
+**/*.pyc
+saida/
+n8n/
+*.json
+README.md

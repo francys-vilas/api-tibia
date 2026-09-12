@@ -5,3 +5,5 @@ __pycache__/
 # saidas do scraper
 *.json
 !requirements.json
+saida/
+!n8n/*.json

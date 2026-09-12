@@ -2,40 +2,95 @@
 """
 Tibia Char Bazaar Scraper
 ==========================
-Raspa os leilões ativos do Char Bazaar oficial (tibia.com) e devolve
+Raspa os leiloes ativos do Char Bazaar oficial (tibia.com) e devolve
 os dados estruturados. Suporta os mesmos filtros da página oficial
 (vocação, mundo, level, skill, etc.) e paginação automática.
 
+O parse do HTML e feito pela biblioteca tibia.py, entao os campos vem
+tipados (datas como datetime, vocacao e status como enum) e o script nao
+precisa manter regex propria pra estrutura da pagina.
+
+Os filtros padrao ficam no bloco CONFIGURACAO logo abaixo dos imports
+(WORLD, VOCATION, LEVEL_FROM, ...). Edite ali pra mudar o comportamento
+de uma rodada sem flag; as flags da CLI sobrescrevem esses valores.
+
 Uso basico:
-    pip install requests beautifulsoup4
-    python tibia_bazaar_scraper.py
+    pip install -r requirements.txt
+    python tibia_bazaar_scraper.py        # usa o bloco CONFIGURACAO
 
 Exemplos:
-    # Knights (vocation=3) no mundo Calmera
-    python tibia_bazaar_scraper.py --vocation 3 --world Calmera
+    # Knights (vocation=3) em Calmera
+    python tibia_bazaar_scraper.py --vocation 3
+
+    # Outro mundo
+    python tibia_bazaar_scraper.py --world Antica
+
+    # Todos os mundos (string vazia desliga o filtro)
+    python tibia_bazaar_scraper.py --world ""
+
+    # Com a ficha completa de cada personagem (1 requisicao a mais por leilao)
+    python tibia_bazaar_scraper.py --limit 5 --details
 
     # Exporta pra JSON
-    python tibia_bazaar_scraper.py --vocation 3 --world Calmera --json saida.json
+    python tibia_bazaar_scraper.py --vocation 3 --json saida.json
 
-Codigos de vocacao (filter_profession):
+Codigos de vocacao (AuctionVocationFilter):
     0 = todas | 1 = None | 2 = Druid | 3 = Knight | 4 = Paladin | 5 = Sorcerer | 6 = Monk
 
-    (Obs: no Exevo Pan a numeracao e diferente. No tibia.com oficial
-     o parametro e "filter_profession". Confira sempre pela pagina real.)
+    (Obs: no Exevo Pan a numeracao e diferente. Estes sao os codigos do
+     tibia.com oficial, os mesmos que o tibia.py usa.)
 """
 
+from datetime import datetime
 import argparse
+import difflib
 import json
-import re
-import time
 import sys
-from dataclasses import dataclass, asdict, field
-from typing import Optional
+import time
+from pathlib import Path
 
 import requests
-from bs4 import BeautifulSoup
+from tibiapy.enums import (
+    AuctionBattlEyeFilter,
+    AuctionOrderBy,
+    AuctionOrderDirection,
+    AuctionVocationFilter,
+    BazaarType,
+    PvpTypeFilter,
+)
+from tibiapy.models import Auction, AuctionFilters, CharacterBazaar
+from tibiapy.parsers import AuctionParser, CharacterBazaarParser
+from tibiapy.urls import get_auction_url, get_bazaar_url
 
-BASE_URL = "https://www.tibia.com/charactertrade/"
+import tibiapy_fixes
+
+# =============================================================================
+# CONFIGURACAO - edite os valores daqui pra mudar os filtros padrao
+# =============================================================================
+# Tudo abaixo e so o DEFAULT: as flags da linha de comando continuam
+# sobrescrevendo qualquer um deles numa rodada especifica.
+
+WORLD = "Calmera"       # nome exato do mundo (case-sensitive); "" = todos
+VOCATION = 0            # 0=todas 1=None 2=Druid 3=Knight 4=Paladin 5=Sorcerer 6=Monk
+LEVEL_FROM = 0          # 0 = sem minimo
+LEVEL_TO = 0            # 0 = sem maximo
+LIMIT = None            # None = traz tudo; N = para nos N primeiros
+MAX_PAGES = None        # None = sem teto de paginas
+DELAY = 1.0             # pausa entre requisicoes, em segundos. NAO use 0.
+DETAILS = False         # True = abre a pagina de cada leilao (1 requisicao por leilao)
+
+# Saida
+PRINT_JSON = True       # True = mostra o JSON no terminal; False = lista resumida
+SAVE_JSON = True        # True = grava um arquivo .json a cada rodada
+OUTPUT_DIR = "saida"    # pasta dos arquivos gerados (criada se nao existir)
+
+# Filtros sem flag equivalente na CLI: so da pra mudar por aqui.
+PVP_TYPE = None         # None = todos | 0=Open 1=Optional 2=Hardcore 3=Retro Open 4=Retro Hardcore
+BATTLEYE_STATE = None   # None = todos | 1=Initially Protected 2=Protected 3=Not Protected
+ORDER_COLUMN = 101      # 101 = fim do leilao (100=lance 102=level 103=inicio)
+ORDER_DIRECTION = 1     # 1 = crescente (quem termina antes vem primeiro)
+
+# =============================================================================
 
 # Um User-Agent de navegador de verdade evita bloqueios simples.
 HEADERS = {
@@ -47,160 +102,77 @@ HEADERS = {
 }
 
 
-@dataclass
-class Auction:
-    auction_id: int
-    name: str
-    level: Optional[int] = None
-    vocation: Optional[str] = None
-    sex: Optional[str] = None
-    world: Optional[str] = 'Calmera'
-    bid: Optional[int] = None
-    bid_type: Optional[str] = None          # "Current Bid" ou "Minimum Bid"
-    auction_end: Optional[str] = None
-    url: Optional[str] = None
-    highlights: list = field(default_factory=list)  # skills, charm points, etc.
+def build_filters(vocation: int, world: str, level_from: int, level_to: int) -> AuctionFilters:
+    """Monta o objeto de filtros do tibia.py a partir dos valores crus."""
+    try:
+        return AuctionFilters(
+            world=world or None,
+            vocation=AuctionVocationFilter(vocation) if vocation else None,
+            min_level=level_from or None,
+            max_level=level_to or None,
+            pvp_type=PvpTypeFilter(PVP_TYPE) if PVP_TYPE is not None else None,
+            battleye=AuctionBattlEyeFilter(BATTLEYE_STATE) if BATTLEYE_STATE is not None else None,
+            order_by=AuctionOrderBy(ORDER_COLUMN),
+            order=AuctionOrderDirection(ORDER_DIRECTION),
+        )
+    except ValueError as exc:
+        sys.exit(f"[x] Filtro invalido: {exc}")
 
 
-def _clean(text: str) -> str:
-    """A pagina usa espaco nao-separavel (\\xa0) nas datas; normaliza pra espaco."""
-    return re.sub(r"\s+", " ", text.replace("\xa0", " ")).strip()
-
-
-def fetch_page(session: requests.Session, params: dict) -> str:
+def fetch_html(session: requests.Session, url: str) -> str:
     """Baixa uma pagina do bazaar. Retorna o HTML cru."""
-    resp = session.get(BASE_URL, params=params, headers=HEADERS, timeout=30)
+    resp = session.get(url, headers=HEADERS, timeout=30)
     resp.raise_for_status()
     return resp.text
 
 
-def parse_auctions(html: str) -> list[Auction]:
+def warn_unknown_world(world: str, bazaar: CharacterBazaar) -> None:
     """
-    Extrai todos os leiloes de uma pagina de HTML.
-    A pagina do tibia.com usa uma tabela com classe 'Auction' por leilao.
+    A pagina de filtros traz a lista de mundos existentes. Se o nome pedido
+    nao estiver nela, o tibia.com ignora o filtro em silencio e devolve o
+    bazaar inteiro - entao vale avisar, em vez de deixar o usuario achar que
+    o mundo simplesmente nao tem leilao.
     """
-    soup = BeautifulSoup(html, "html.parser")
-    auctions: list[Auction] = []
+    mundos = bazaar.filters.available_worlds if bazaar.filters else []
+    if not world or not mundos or world in mundos:
+        return
 
-    # Cada leilao vive dentro de um bloco <div class="Auction">
-    for block in soup.select("div.Auction"):
-        # --- ID e nome (link de detalhes) ---
-        header = block.select_one(".AuctionCharacterName a")
-        if not header:
-            continue
-        name = header.get_text(strip=True)
-        id_match = re.search(r"auctionid=(\d+)", header.get("href", ""))
-        auction_id = int(id_match.group(1)) if id_match else -1
-        # O href da pagina traz "&currentpage=", que o parser de HTML decodifica
-        # como a entidade &curren; e corrompe a URL. Remontar pelo id evita isso.
-        full_url = (
-            f"{BASE_URL}?subtopic=currentcharactertrades"
-            f"&page=details&auctionid={auction_id}"
-        )
+    aviso = f"[!] '{world}' nao esta na lista de {len(mundos)} mundos do bazaar."
+    if parecidos := difflib.get_close_matches(world, mundos, n=3):
+        aviso += f" Voce quis dizer: {', '.join(parecidos)}?"
 
-        # --- Level / Vocacao / Sexo / Mundo ---
-        # Linha unica tipo:
-        #   "Nome Level: 754 | Vocation: Elite Knight | Male | World: Issobra"
-        head = block.select_one(".AuctionHeader")
-        header_text = _clean(head.get_text(" ", strip=True)) if head else ""
-
-        def grab(pattern):
-            m = re.search(pattern, header_text)
-            return m.group(1).strip() if m else None
-
-        level = grab(r"Level:\s*(\d+)")
-        vocation = grab(r"Vocation:\s*(.+?)\s*\|")
-        sex = grab(r"\|\s*(Male|Female)\s*\|")
-        world = grab(r"World:\s*(\w+)")
-
-        # --- Datas e lance: vem como pares rotulo/valor, nao como texto corrido ---
-        short_data = {}
-        for lbl in block.select(".ShortAuctionDataLabel"):
-            val = lbl.find_next(class_="ShortAuctionDataValue")
-            if val is None:
-                continue
-            key = _clean(lbl.get_text(" ", strip=True)).rstrip(":")
-            short_data[key] = _clean(val.get_text(" ", strip=True))
-
-        auction_end = short_data.get("Auction End")
-
-        bid_type = None
-        bid = None
-        for label in ("Current Bid", "Minimum Bid"):
-            raw = short_data.get(label)
-            if raw:
-                bid_type = label
-                bid = int(re.sub(r"[^\d]", "", raw))
-                break
-
-        # --- Destaques (skills, charm points, boss points...) ---
-        highlights = []
-        for feat in block.select(".Entry"):
-            txt = _clean(feat.get_text(" ", strip=True))
-            if txt:
-                highlights.append(txt)
-
-        auctions.append(
-            Auction(
-                auction_id=auction_id,
-                name=name,
-                level=int(level) if level else None,
-                vocation=vocation,
-                sex=sex,
-                world=world,
-                bid=bid,
-                bid_type=bid_type,
-                auction_end=auction_end,
-                url=full_url,
-                highlights=highlights,
-            )
-        )
-
-    return auctions
+    print(aviso, file=sys.stderr)
+    print("[!] O filtro de mundo foi ignorado pelo tibia.com.", file=sys.stderr)
 
 
-def get_total_pages(html: str) -> int:
-    """Le o numero da ultima pagina a partir do link 'Last Page'."""
-    m = re.search(r"currentpage=(\d+)[^>]*>\s*(?:Last Page|»\s*Last)", html)
-    if m:
-        return int(m.group(1))
-    # fallback: procura o maior currentpage que aparecer
-    nums = [int(n) for n in re.findall(r"currentpage=(\d+)", html)]
-    return max(nums) if nums else 1
-
-
-def scrape(vocation=0, world="", level_from=0, level_to=0,
-           max_pages=None, delay=1.0, limit=None) -> list[Auction]:
+def scrape(vocation=VOCATION, world=WORLD, level_from=LEVEL_FROM,
+           level_to=LEVEL_TO, max_pages=MAX_PAGES, delay=DELAY,
+           limit=LIMIT, session=None) -> list[Auction]:
     """
     Raspa o bazaar inteiro (ou parte dele) com os filtros dados.
 
     delay = pausa em segundos entre requisicoes. NAO reduza pra 0:
             ser educado com o servidor da CipSoft evita bloqueio.
     """
-    session = requests.Session()
+    session = session or requests.Session()
+    filters = build_filters(vocation, world, level_from, level_to)
 
-    base_params = {
-        "subtopic": "currentcharactertrades",
-        "filter_profession": vocation,
-        "filter_world": world,
-        "filter_levelrangefrom": level_from,
-        "filter_levelrangeto": level_to,
-        "filter_worldpvptype": 9,        # 9 = todos
-        "filter_worldbattleyestate": 0,  # 0 = todos
-        "order_column": 101,             # 101 = por data de fim
-        "order_direction": 1,
-        "searchtype": 1,
-    }
+    def pagina(n: int) -> CharacterBazaar:
+        url = get_bazaar_url(BazaarType.CURRENT, page=n, filters=filters)
+        return CharacterBazaarParser.from_content(fetch_html(session, url))
 
     # Primeira pagina: descobre quantas paginas existem
-    first_html = fetch_page(session, {**base_params, "currentpage": 1})
-    total = get_total_pages(first_html)
+    bazaar = pagina(1)
+    warn_unknown_world(world, bazaar)
+
+    total = bazaar.total_pages or 1
     if max_pages:
         total = min(total, max_pages)
 
-    print(f"[i] Total de paginas a raspar: {total}", file=sys.stderr)
+    print(f"[i] {bazaar.results_count or 0} leiloes no filtro; "
+          f"paginas a raspar: {total}", file=sys.stderr)
 
-    all_auctions = parse_auctions(first_html)
+    all_auctions = list(bazaar.entries)
     print(f"[i] Pagina 1/{total}: {len(all_auctions)} leiloes", file=sys.stderr)
 
     # Com --limit nao adianta baixar o resto: para assim que tiver o bastante.
@@ -209,8 +181,7 @@ def scrape(vocation=0, world="", level_from=0, level_to=0,
 
     for page in range(2, total + 1):
         time.sleep(delay)  # <-- educacao com o servidor
-        html = fetch_page(session, {**base_params, "currentpage": page})
-        page_auctions = parse_auctions(html)
+        page_auctions = pagina(page).entries
         all_auctions.extend(page_auctions)
         print(f"[i] Pagina {page}/{total}: {len(page_auctions)} leiloes", file=sys.stderr)
         if limit and len(all_auctions) >= limit:
@@ -219,22 +190,73 @@ def scrape(vocation=0, world="", level_from=0, level_to=0,
     return all_auctions[:limit] if limit else all_auctions
 
 
+def fetch_details(session: requests.Session, auctions: list[Auction],
+                  delay: float = DELAY) -> None:
+    """
+    Abre a pagina de cada leilao e preenche o campo `details` no lugar.
+    Custa UMA requisicao por leilao, entao so vale com --limit ou com filtro
+    apertado. Leilao que falhar fica com details = None e a rodada segue.
+    """
+    tibiapy_fixes.apply()  # o parser de detalhe do tibia.py 6.4.0 esta defasado
+
+    for i, auction in enumerate(auctions, start=1):
+        time.sleep(delay)
+        print(f"[i] Detalhe {i}/{len(auctions)}: {auction.name}", file=sys.stderr)
+        try:
+            html = fetch_html(session, get_auction_url(auction.auction_id))
+            completo = AuctionParser.from_content(html, auction.auction_id)
+        except Exception as exc:  # um leilao quebrado nao derruba a rodada
+            print(f"[!] Falhou o detalhe de {auction.name}: {exc}", file=sys.stderr)
+            continue
+
+        if completo is not None:
+            auction.details = completo.details
+
+
+def to_record(auction: Auction) -> dict:
+    """
+    Converte o modelo do tibia.py no dicionario que vai pro JSON.
+
+    O grosso vem do proprio modelo (datas em ISO 8601, enums como texto).
+    Os tres ajustes do fim mantem compatibilidade com o formato que o script
+    gerava antes: `sex` capitalizado, `url` (que no tibia.py e propriedade,
+    nao campo) e `highlights` como lista de strings.
+    """
+    rec = json.loads(auction.model_dump_json())
+    if rec.get("sex"):
+        rec["sex"] = rec["sex"].capitalize()
+    rec["url"] = str(auction.url)
+    rec["highlights"] = [arg["content"] for arg in rec.get("sales_arguments", [])]
+    return rec
+
+
 def main():
     p = argparse.ArgumentParser(description="Scraper do Char Bazaar do Tibia")
-    p.add_argument("--vocation", type=int, default=0,
-                   help="0=todas 1=None 2=Druid 3=Knight 4=Paladin 5=Sorcerer 6=Monk")
-    p.add_argument("--world", default="", help="Nome do mundo (ex: Calmera)")
-    p.add_argument("--level-from", type=int, default=0)
-    p.add_argument("--level-to", type=int, default=0)
-    p.add_argument("--max-pages", type=int, default=None,
+    p.add_argument("--vocation", type=int, default=VOCATION,
+                   help="0=todas 1=None 2=Druid 3=Knight 4=Paladin 5=Sorcerer 6=Monk "
+                        f"(default: {VOCATION})")
+    p.add_argument("--world", default=WORLD,
+                   help=f'Nome do mundo (default: {WORLD or "todos"}). '
+                        'Use --world "" para todos')
+    p.add_argument("--level-from", type=int, default=LEVEL_FROM,
+                   help=f"Level minimo (default: {LEVEL_FROM}, 0 = sem minimo)")
+    p.add_argument("--level-to", type=int, default=LEVEL_TO,
+                   help=f"Level maximo (default: {LEVEL_TO}, 0 = sem maximo)")
+    p.add_argument("--max-pages", type=int, default=MAX_PAGES,
                    help="Limita quantas paginas raspar (util pra testar)")
-    p.add_argument("--limit", type=int, default=None,
+    p.add_argument("--limit", type=int, default=LIMIT,
                    help="Traz apenas os N primeiros resultados (ex: 10)")
-    p.add_argument("--delay", type=float, default=1.0,
-                   help="Pausa entre requisicoes em segundos (default 1.0)")
-    p.add_argument("--json", metavar="ARQUIVO", help="Salva o resultado em JSON")
+    p.add_argument("--delay", type=float, default=DELAY,
+                   help=f"Pausa entre requisicoes em segundos (default {DELAY})")
+    p.add_argument("--details", action="store_true", default=DETAILS,
+                   help="Abre a pagina de cada leilao e traz a ficha completa "
+                        "(skills, itens, charms...). Custa 1 requisicao por leilao")
+    p.add_argument("--json", metavar="ARQUIVO",
+                   help='Salva o resultado em JSON. Use --json - pra jogar o '
+                        'JSON no stdout (util pra pipe / n8n)')
     args = p.parse_args()
 
+    session = requests.Session()
     auctions = scrape(
         vocation=args.vocation,
         world=args.world,
@@ -243,18 +265,47 @@ def main():
         max_pages=args.max_pages,
         delay=args.delay,
         limit=args.limit,
+        session=session,
     )
 
-    print(f"\n=== {len(auctions)} leiloes encontrados ===\n")
-    for a in auctions:
-        bid_str = f"{a.bid:,}".replace(",", ".") if a.bid else "-"
-        print(f"[{a.auction_id}] {a.name} | Lvl {a.level} {a.vocation} "
-              f"| {a.world} | {a.bid_type or ''} {bid_str}")
+    if args.details and auctions:
+        fetch_details(session, auctions, delay=args.delay)
 
-    if args.json:
-        with open(args.json, "w", encoding="utf-8") as f:
-            json.dump([asdict(a) for a in auctions], f, ensure_ascii=False, indent=2)
-        print(f"\n[i] Salvo em {args.json}", file=sys.stderr)
+    payload = [to_record(a) for a in auctions]
+
+    # "--json -" e modo pipe: JSON puro no stdout, sem arquivo e sem texto solto.
+    if args.json == "-":
+        json.dump(payload, sys.stdout, ensure_ascii=False, indent=2)
+        sys.stdout.write("\n")
+        return
+
+    # --- terminal ---
+    if PRINT_JSON:
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+    else:
+        print(f"\n=== {len(payload)} leiloes encontrados ===\n")
+        for a in payload:
+            bid_str = f"{a['bid']:,}".replace(",", ".") if a["bid"] else "-"
+            print(f"[{a['auction_id']}] {a['name']} | Lvl {a['level']} {a['vocation']} "
+                  f"| {a['world']} | {a['bid_type'] or ''} {bid_str}")
+
+    # --- arquivo ---
+    # Sem --json, o nome sai automatico com mundo + timestamp, entao cada
+    # rodada gera um arquivo novo em vez de sobrescrever o anterior.
+    destino = args.json
+    if not destino and SAVE_JSON:
+        mundo = (args.world or "todos").lower()
+        carimbo = datetime.now().strftime("%Y%m%d-%H%M%S")
+        destino = Path(OUTPUT_DIR) / f"bazaar_{mundo}_{carimbo}.json"
+
+    if destino:
+        destino = Path(destino)
+        destino.parent.mkdir(parents=True, exist_ok=True)
+        destino.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+        print(f"\n[i] {len(payload)} leiloes salvos em {destino.resolve()}",
+              file=sys.stderr)
 
 
 if __name__ == "__main__":

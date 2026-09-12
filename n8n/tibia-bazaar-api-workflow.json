@@ -1,0 +1,198 @@
+{
+  "name": "Tibia Bazaar via API",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "n1",
+      "name": "Executar manualmente",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        -220,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 15
+            }
+          ]
+        }
+      },
+      "id": "n2",
+      "name": "A cada 15 minutos",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        -220,
+        400
+      ],
+      "notes": "A API tem cache proprio (CACHE_TTL), entao consultar de 15 em 15 min nao significa raspar o tibia.com de 15 em 15 min."
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "api_url",
+              "name": "api_url",
+              "value": "http://tibia-bazaar-api:8000",
+              "type": "string"
+            },
+            {
+              "id": "world",
+              "name": "world",
+              "value": "Calmera",
+              "type": "string"
+            },
+            {
+              "id": "vocation",
+              "name": "vocation",
+              "value": 0,
+              "type": "number"
+            },
+            {
+              "id": "level_from",
+              "name": "level_from",
+              "value": 0,
+              "type": "number"
+            },
+            {
+              "id": "level_to",
+              "name": "level_to",
+              "value": 0,
+              "type": "number"
+            },
+            {
+              "id": "limit",
+              "name": "limit",
+              "value": 0,
+              "type": "number"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "n3",
+      "name": "Configuracao",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        20,
+        300
+      ],
+      "notes": "api_url e o nome do servico da API na rede interna do Coolify. world vazio = todos os mundos. limit 0 = todos."
+    },
+    {
+      "parameters": {
+        "url": "={{ $json.api_url }}/auctions",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "world",
+              "value": "={{ $json.world }}"
+            },
+            {
+              "name": "vocation",
+              "value": "={{ $json.vocation }}"
+            },
+            {
+              "name": "level_from",
+              "value": "={{ $json.level_from }}"
+            },
+            {
+              "name": "level_to",
+              "value": "={{ $json.level_to }}"
+            },
+            {
+              "name": "limit",
+              "value": "={{ $json.limit }}"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 180000
+        }
+      },
+      "id": "n4",
+      "name": "Consultar API",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        240,
+        300
+      ],
+      "notes": "Timeout alto so pro caso raro de cache vazio com world vazio (~2 min). Com cache quente responde em milissegundos."
+    },
+    {
+      "parameters": {
+        "fieldToSplitOut": "auctions",
+        "options": {}
+      },
+      "id": "n5",
+      "name": "Separar leiloes",
+      "type": "n8n-nodes-base.splitOut",
+      "typeVersion": 1,
+      "position": [
+        460,
+        300
+      ],
+      "notes": "A API devolve {count, filters, cache, auctions}. Aqui vira um item por leilao."
+    }
+  ],
+  "connections": {
+    "Executar manualmente": {
+      "main": [
+        [
+          {
+            "node": "Configuracao",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "A cada 15 minutos": {
+      "main": [
+        [
+          {
+            "node": "Configuracao",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Configuracao": {
+      "main": [
+        [
+          {
+            "node": "Consultar API",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Consultar API": {
+      "main": [
+        [
+          {
+            "node": "Separar leiloes",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {}
+}

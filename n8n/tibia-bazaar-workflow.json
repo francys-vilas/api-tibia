@@ -1,0 +1,352 @@
+{
+  "name": "Tibia Char Bazaar - Calmera",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "n1",
+      "name": "Executar manualmente",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        -220,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "world",
+              "name": "world",
+              "value": "Calmera",
+              "type": "string"
+            },
+            {
+              "id": "vocation",
+              "name": "vocation",
+              "value": 0,
+              "type": "number"
+            },
+            {
+              "id": "level_from",
+              "name": "level_from",
+              "value": 0,
+              "type": "number"
+            },
+            {
+              "id": "level_to",
+              "name": "level_to",
+              "value": 0,
+              "type": "number"
+            },
+            {
+              "id": "limit",
+              "name": "limit",
+              "value": 0,
+              "type": "number"
+            },
+            {
+              "id": "max_pages",
+              "name": "max_pages",
+              "value": 0,
+              "type": "number"
+            },
+            {
+              "id": "pvp_type",
+              "name": "pvp_type",
+              "value": 9,
+              "type": "number"
+            },
+            {
+              "id": "battleye_state",
+              "name": "battleye_state",
+              "value": 0,
+              "type": "number"
+            },
+            {
+              "id": "order_column",
+              "name": "order_column",
+              "value": 101,
+              "type": "number"
+            },
+            {
+              "id": "order_direction",
+              "name": "order_direction",
+              "value": 1,
+              "type": "number"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "n2",
+      "name": "Configuracao",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        0,
+        300
+      ],
+      "notes": "Filtros ficam aqui. limit/max_pages = 0 significa sem limite."
+    },
+    {
+      "parameters": {
+        "url": "https://www.tibia.com/charactertrade/",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "subtopic",
+              "value": "currentcharactertrades"
+            },
+            {
+              "name": "filter_profession",
+              "value": "={{ $json.vocation }}"
+            },
+            {
+              "name": "filter_world",
+              "value": "={{ $json.world }}"
+            },
+            {
+              "name": "filter_levelrangefrom",
+              "value": "={{ $json.level_from }}"
+            },
+            {
+              "name": "filter_levelrangeto",
+              "value": "={{ $json.level_to }}"
+            },
+            {
+              "name": "filter_worldpvptype",
+              "value": "={{ $json.pvp_type }}"
+            },
+            {
+              "name": "filter_worldbattleyestate",
+              "value": "={{ $json.battleye_state }}"
+            },
+            {
+              "name": "order_column",
+              "value": "={{ $json.order_column }}"
+            },
+            {
+              "name": "order_direction",
+              "value": "={{ $json.order_direction }}"
+            },
+            {
+              "name": "searchtype",
+              "value": "1"
+            },
+            {
+              "name": "currentpage",
+              "value": "1"
+            }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "User-Agent",
+              "value": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "text"
+            }
+          },
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 1000
+            }
+          },
+          "timeout": 30000
+        }
+      },
+      "id": "n3",
+      "name": "Buscar pagina 1",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        220,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Le o \"Results: N\" da primeira pagina e devolve um item por pagina a raspar.\n// Cada item vira uma requisicao no HTTP Request seguinte.\nconst cfg = $('Configuracao').first().json;\nconst html = $input.first().json.data;\n\nconst m = html.match(/Results:\\s*([\\d,.]+)/);\nconst total = m ? parseInt(m[1].replace(/[,.]/g, ''), 10) : 0;\n\nconst POR_PAGINA = 25;\nlet paginas = Math.max(1, Math.ceil(total / POR_PAGINA));\nif (cfg.max_pages) paginas = Math.min(paginas, cfg.max_pages);\n\nconst out = [];\nfor (let p = 1; p <= paginas; p++) {\n  out.push({ json: { ...cfg, currentpage: p, total_results: total, paginas } });\n}\nreturn out;\n"
+      },
+      "id": "n4",
+      "name": "Descobrir paginas",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        440,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://www.tibia.com/charactertrade/",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "subtopic",
+              "value": "currentcharactertrades"
+            },
+            {
+              "name": "filter_profession",
+              "value": "={{ $json.vocation }}"
+            },
+            {
+              "name": "filter_world",
+              "value": "={{ $json.world }}"
+            },
+            {
+              "name": "filter_levelrangefrom",
+              "value": "={{ $json.level_from }}"
+            },
+            {
+              "name": "filter_levelrangeto",
+              "value": "={{ $json.level_to }}"
+            },
+            {
+              "name": "filter_worldpvptype",
+              "value": "={{ $json.pvp_type }}"
+            },
+            {
+              "name": "filter_worldbattleyestate",
+              "value": "={{ $json.battleye_state }}"
+            },
+            {
+              "name": "order_column",
+              "value": "={{ $json.order_column }}"
+            },
+            {
+              "name": "order_direction",
+              "value": "={{ $json.order_direction }}"
+            },
+            {
+              "name": "searchtype",
+              "value": "1"
+            },
+            {
+              "name": "currentpage",
+              "value": "={{ $json.currentpage }}"
+            }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "User-Agent",
+              "value": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "text"
+            }
+          },
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 1000
+            }
+          },
+          "timeout": 30000
+        }
+      },
+      "id": "n5",
+      "name": "Buscar todas as paginas",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        660,
+        300
+      ],
+      "notes": "Batching 1 req/s. Nao baixe o intervalo: evita bloqueio da CipSoft."
+    },
+    {
+      "parameters": {
+        "jsCode": "// ---- parser do Char Bazaar (espelha tibia_bazaar_scraper.py) ----\nfunction decode(s) {\n  return s.replace(/&#160;|&nbsp;/g, ' ').replace(/&amp;/g, '&')\n          .replace(/&quot;/g, '\"').replace(/&#39;|&apos;/g, \"'\")\n          .replace(/&lt;/g, '<').replace(/&gt;/g, '>');\n}\n\nfunction stripTags(s) {\n  return decode(s.replace(/<[^>]*>/g, ' ')).replace(/\\s+/g, ' ').trim();\n}\n\nfunction parseAuctions(html) {\n  const out = [];\n\n  // Fatia o HTML nos limites de <div class=\"Auction\">.\n  const starts = [];\n  const re = /<div class=\"Auction\"\\s*>/g;\n  let m;\n  while ((m = re.exec(html)) !== null) starts.push(m.index);\n\n  for (let i = 0; i < starts.length; i++) {\n    const fim = i + 1 < starts.length ? starts[i + 1] : html.length;\n    const block = html.slice(starts[i], fim);\n\n    const idM = block.match(/auctionid=(\\d+)/);\n    if (!idM) continue;\n    const auction_id = parseInt(idM[1], 10);\n\n    const nameM = block.match(/<div class=\"AuctionCharacterName\"\\s*>\\s*<a[^>]*>([^<]*)<\\/a>/);\n    if (!nameM) continue;\n    const name = decode(nameM[1]).trim();\n\n    // O cabecalho e tudo que vem antes do AuctionBody, sem as tags.\n    // O mundo vem dentro de um <a>, entao tem que tirar as tags antes do regex.\n    const headEnd = block.indexOf('<div class=\"AuctionBody\"');\n    const headerText = stripTags(block.slice(0, headEnd === -1 ? block.length : headEnd));\n    const grab = (rx) => { const g = headerText.match(rx); return g ? g[1].trim() : null; };\n\n    const level = grab(/Level:\\s*(\\d+)/);\n    const vocation = grab(/Vocation:\\s*(.+?)\\s*\\|/);\n    const sex = grab(/\\|\\s*(Male|Female)\\s*\\|/);\n    const world = grab(/World:\\s*(\\w+)/);\n\n    // Datas e lance vem como pares rotulo/valor, nao como texto corrido:\n    // pra cada rotulo, vale o primeiro valor que aparecer depois dele.\n    const labels = [], values = [];\n    let r = /<div class=\"ShortAuctionDataLabel\"\\s*>(.*?)<\\/div>/g;\n    while ((m = r.exec(block)) !== null) labels.push({ pos: m.index, text: stripTags(m[1]) });\n    r = /<div class=\"ShortAuctionDataValue\"\\s*>(.*?)<\\/div>/g;\n    while ((m = r.exec(block)) !== null) values.push({ pos: m.index, text: stripTags(m[1]) });\n\n    const short = {};\n    for (const lb of labels) {\n      const v = values.find((x) => x.pos > lb.pos);\n      if (v) short[lb.text.replace(/:$/, '')] = v.text;\n    }\n\n    let bid = null, bid_type = null;\n    for (const label of ['Current Bid', 'Minimum Bid']) {\n      if (short[label]) {\n        bid_type = label;\n        bid = parseInt(short[label].replace(/[^\\d]/g, ''), 10);\n        break;\n      }\n    }\n\n    const highlights = [];\n    r = /<div class=\"Entry\"[^>]*>(.*?)<\\/div>/g;\n    while ((m = r.exec(block)) !== null) {\n      const t = stripTags(m[1]);\n      if (t) highlights.push(t);\n    }\n\n    // O href da pagina traz \"&currentpage=\", que vira a entidade &curren; e\n    // corrompe a URL. Remontar pelo id evita isso.\n    out.push({\n      auction_id,\n      name,\n      level: level ? parseInt(level, 10) : null,\n      vocation,\n      sex,\n      world,\n      bid,\n      bid_type,\n      auction_end: short['Auction End'] || null,\n      url: 'https://www.tibia.com/charactertrade/?subtopic=currentcharactertrades'\n           + '&page=details&auctionid=' + auction_id,\n      highlights,\n    });\n  }\n\n  return out;\n}\n\n// ---- junta todas as paginas recebidas ----\nconst cfg = $('Configuracao').first().json;\n\nlet todos = [];\nfor (const item of $input.all()) {\n  const html = item.json.data;\n  if (typeof html === 'string') todos = todos.concat(parseAuctions(html));\n}\n\n// Leiloes terminam a todo momento, entao a paginacao pode repetir um item\n// entre uma requisicao e outra. Mantem so a primeira ocorrencia de cada id.\nconst vistos = new Set();\ntodos = todos.filter((a) => {\n  if (vistos.has(a.auction_id)) return false;\n  vistos.add(a.auction_id);\n  return true;\n});\n\nif (cfg.limit) todos = todos.slice(0, cfg.limit);\n\nreturn todos.map((a) => ({ json: a }));\n"
+      },
+      "id": "n6",
+      "name": "Extrair leiloes",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        880,
+        300
+      ]
+    }
+  ],
+  "connections": {
+    "Executar manualmente": {
+      "main": [
+        [
+          {
+            "node": "Configuracao",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Configuracao": {
+      "main": [
+        [
+          {
+            "node": "Buscar pagina 1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Buscar pagina 1": {
+      "main": [
+        [
+          {
+            "node": "Descobrir paginas",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Descobrir paginas": {
+      "main": [
+        [
+          {
+            "node": "Buscar todas as paginas",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Buscar todas as paginas": {
+      "main": [
+        [
+          {
+            "node": "Extrair leiloes",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {}
+}

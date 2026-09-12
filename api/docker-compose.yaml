@@ -1,0 +1,21 @@
+# Pra rodar local (a partir da raiz do repo):
+#
+#   docker compose -f api/docker-compose.yaml up --build
+#   curl "http://localhost:8000/auctions?world=Calmera&limit=5"
+#
+# O contexto e a raiz do repo (`..`), porque a imagem precisa do scraper que
+# mora la. No Coolify, prefira o build pack "Dockerfile" - veja o README.
+services:
+  api:
+    build:
+      context: ..
+      dockerfile: api/Dockerfile
+    image: tibia-bazaar-api
+    ports:
+      - "8000:8000"
+    environment:
+      CACHE_TTL: "300"         # segundos que um resultado vale
+      DEFAULT_WORLD: "Calmera" # "" = todos os mundos
+      SCRAPER_DELAY: "1.0"     # pausa entre requisicoes ao tibia.com. NAO use 0
+      DETAILS_MAX: "50"        # teto de leiloes por chamada com details=true
+    restart: unless-stopped

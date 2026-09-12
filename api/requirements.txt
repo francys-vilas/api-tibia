@@ -1,0 +1,4 @@
+# Dependencias so da API. As do scraper ficam no requirements.txt da raiz e
+# sao instaladas junto pelo Dockerfile.
+fastapi==0.141.1
+uvicorn[standard]==0.52.4
