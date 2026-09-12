@@ -1,0 +1,7 @@
+.venv/
+__pycache__/
+*.pyc
+
+# saidas do scraper
+*.json
+!requirements.json
