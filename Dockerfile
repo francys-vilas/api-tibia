@@ -1,13 +1,12 @@
 # =============================================================================
 # Imagem da API do Char Bazaar
 # =============================================================================
-# ATENCAO: o contexto de build e a RAIZ do repo, nao esta pasta - a imagem
-# precisa do tibia_bazaar_scraper.py, que mora la em cima.
+# Fica na raiz, e nao em api/, porque o contexto de build precisa ser a raiz:
+# a imagem copia o tibia_bazaar_scraper.py, que mora aqui. Na raiz, o Coolify
+# acha o Dockerfile com os campos no default, sem Base Directory nem
+# Dockerfile Location customizados.
 #
-#   docker build -f api/Dockerfile -t tibia-bazaar-api .
-#
-# No Coolify: Build Pack = Dockerfile, Base Directory = /,
-#             Dockerfile Location = /api/Dockerfile
+#   docker build -t tibia-bazaar-api .
 # =============================================================================
 FROM python:3.12-slim
 

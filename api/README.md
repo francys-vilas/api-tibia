@@ -114,10 +114,14 @@ GitHub App (ou deploy key) no Coolify antes, em **Sources**.
 | Campo | Valor | Por que |
 | --- | --- | --- |
 | Build Pack | `Dockerfile` | |
-| Base Directory | `/` | e o contexto do build; a imagem precisa do `tibia_bazaar_scraper.py`, que esta na raiz |
-| Dockerfile Location | `/api/Dockerfile` | caminho relativo ao Base Directory |
+| Base Directory | `/` (default) | e o contexto do build; a imagem precisa do `tibia_bazaar_scraper.py`, que esta na raiz |
+| Dockerfile Location | `/Dockerfile` (default) | o Dockerfile fica na raiz justamente pra nao precisar customizar isso |
 | Ports Exposes | `8000` | |
 | Domains | **deixar vazio** | sem FQDN, o proxy nao publica a aplicacao e ela fica so na rede interna |
+
+O Dockerfile fica na **raiz** do repo, e nao em `api/`: o build precisa da raiz
+como contexto (a imagem copia o `tibia_bazaar_scraper.py`), e na raiz o Coolify
+o encontra sem nenhum campo customizado.
 
 **Nao crie Port Mappings.** Mapear porta publica a aplicacao no IP do servidor,
 que e justamente o que nao queremos (nao ha autenticacao no codigo).
@@ -154,7 +158,7 @@ Na sua maquina (a partir da raiz do repo):
 
 ```powershell
 # --platform garante uma imagem linux/amd64, que e o que o servidor roda
-docker build --platform linux/amd64 -f api/Dockerfile -t <usuario>/tibia-bazaar-api:1.0.0 .
+docker build --platform linux/amd64 -t <usuario>/tibia-bazaar-api:1.0.0 .
 docker login
 docker push <usuario>/tibia-bazaar-api:1.0.0
 ```

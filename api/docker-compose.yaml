@@ -9,7 +9,7 @@ services:
   api:
     build:
       context: ..
-      dockerfile: api/Dockerfile
+      dockerfile: Dockerfile
     image: tibia-bazaar-api
     ports:
       - "8000:8000"
